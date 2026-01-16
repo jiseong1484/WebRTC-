@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Join Session</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; padding: 16px; max-width: 960px; margin: 0 auto; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin: 12px 0; }
+    button { padding: 10px 12px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+    video { width: 100%; max-height: 320px; background: #000; border-radius: 12px; }
+    .hint { color: #555; font-size: 14px; }
+    pre { background: #f6f6f6; padding: 10px; border-radius: 10px; overflow: auto; }
+  </style>
+</head>
+<body>
+<h1>고객 입장 (Customer)</h1>
+
+<div class="card">
+  <div class="hint">링크의 sessionId로 자동 입장합니다.</div>
+  <div class="hint" id="status"></div>
+  <div class="hint" id="wsStatus">WS: -</div>
+  <div class="hint" id="pcStatus">PC: -</div>
+  <div class="hint" id="iceStatus">ICE: -</div>
+  <pre id="log"></pre>
+</div>
+
+<div class="card">
+  <div class="hint">Local</div>
+  <video id="localVideo" autoplay playsinline muted></video>
+  <div class="hint" style="margin-top:10px;">Remote</div>
+  <video id="remoteVideo" autoplay playsinline></video>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  let roomId = "";
+  let ws = null;
+  let pc = null;
+  let localStream = null;
+  let pendingRemoteCandidates = [];
+
+  function uiLog(...args) {
+    console.log(...args);
+    const el = $("log");
+    el.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\n";
+    el.scrollTop = el.scrollHeight;
+  }
+  function setText(id, msg) { const el = $(id); if (el) el.textContent = msg; }
+
+  function getWsUrl() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    // same-origin (ngrok https -> wss, local http -> ws)
+    return `${proto}://${location.host}/ws`;
+  }
+
+  function getApiBase() {
+    // same-origin (ngrok https, local http)
+    return location.origin;
+  }
+
+  function wsSend(type, payload) {
+    const msg = { type, roomId, payload };
+    uiLog("[WS ->]", type, "room=", roomId);
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify(msg));
+  }
+
+  async function flushPendingCandidates() {
+    if (!pc || !pc.remoteDescription) return;
+    const toAdd = pendingRemoteCandidates;
+    pendingRemoteCandidates = [];
+    for (const c of toAdd) {
+      try { await pc.addIceCandidate(c); } catch (e) { console.error(e); }
+    }
+  }
+
+  // ===== Boot =====
+  (async function init() {
+    const params = new URLSearchParams(location.search);
+    const sessionId = params.get("sessionId");
+    if (!sessionId) {
+      setText("status", "❌ sessionId가 없는 링크입니다.");
+      return;
+    }
+    roomId = sessionId;
+    setText("status", `세션 입장 준비: ${roomId}`);
+
+    // (선택) 세션 유효성 확인
+    try {
+      const check = await fetch(`${getApiBase()}/api/sessions/${encodeURIComponent(roomId)}`);
+      if (!check.ok) throw new Error("세션 조회 실패: " + check.status);
+      const info = await check.json();
+      setText("status", `세션 상태: ${info.status}, 만료: ${info.expiresAt}`);
+      if (info.status !== "ACTIVE") {
+        setText("status", `❌ 세션이 ACTIVE가 아닙니다: ${info.status}`);
+        return;
+      }
+    } catch (e) {
+      // 개발 중에는 체크 실패해도 진행 가능하게 두고 싶으면 return을 빼도 됨
+      setText("status", "⚠️ 세션 확인 실패(개발중): " + e.message);
+      // return;
+    }
+
+    // Media
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        $("localVideo").srcObject = localStream;
+    } catch (e) {
+        setText("status", "X getUserMedia 실패: " + e.message);
+        return ;
+    }
+    uiLog("[MEDIA] local stream ready");
+
+    // PC
+    pc = new RTCPeerConnection({ iceServers: [] });
+    for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
+
+    pc.ontrack = (event) => {
+      $("remoteVideo").srcObject = event.streams[0];
+      uiLog("[PC] ontrack remote stream");
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        uiLog("[ICE local] generated", event.candidate.candidate);
+        if (ws && ws.readyState === 1 && roomId) wsSend("candidate", event.candidate);
+      } else {
+        setText("iceStatus", "ICE 후보 수집 완료");
+      }
+    };
+
+    pc.onconnectionstatechange = () => setText("pcStatus", `PC: ${pc.connectionState}`);
+    pc.oniceconnectionstatechange = () => setText("iceStatus", `ICE: ${pc.iceConnectionState}`);
+
+    setText("pcStatus", "PC: created");
+
+    // WS connect + join
+    ws = new WebSocket(getWsUrl());
+    uiLog("[WS] connecting to", ws.url);
+
+    ws.onopen = () => {
+      setText("wsStatus", "WS: connected");
+      uiLog("[WS] open");
+      wsSend("join", {});
+    };
+
+    ws.onclose = () => {
+      setText("wsStatus", "WS: closed");
+      uiLog("[WS] close");
+    };
+
+    ws.onerror = () => {
+      setText("wsStatus", "WS: error");
+      uiLog("[WS] error");
+    };
+
+    ws.onmessage = async (evt) => {
+      let msg;
+      try { msg = JSON.parse(evt.data); }
+      catch (e) { console.error("JSON parse failed", e, evt.data); return; }
+
+      uiLog("[WS <-]", msg.type, "room=", msg.roomId);
+
+      if (msg.type === "offer") {
+        await pc.setRemoteDescription(msg.payload);
+        await flushPendingCandidates();
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        wsSend("answer", pc.localDescription);
+
+      } else if (msg.type === "answer") {
+        await pc.setRemoteDescription(msg.payload);
+        await flushPendingCandidates();
+
+      } else if (msg.type === "candidate") {
+        if (pc.remoteDescription) await pc.addIceCandidate(msg.payload);
+        else pendingRemoteCandidates.push(msg.payload);
+      }
+    };
+  })();
+</script>
+
+</body>
+</html>
