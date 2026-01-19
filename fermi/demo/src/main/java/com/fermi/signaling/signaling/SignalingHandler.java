@@ -41,7 +41,7 @@ public class SignalingHandler extends TextWebSocketHandler {
                 Set<WebSocketSession> set = rooms.get(roomId);
                 if (set != null) set.remove(session);
             }
-            case "offer", "answer", "candidate" -> {
+            case "offer", "answer", "candidate", "ended" -> {
                 relayToOthers(roomId, session, message);
             }
             default -> {
