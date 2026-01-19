@@ -22,6 +22,7 @@
   <div class="hint" id="wsStatus">WS: -</div>
   <div class="hint" id="pcStatus">PC: -</div>
   <div class="hint" id="iceStatus">ICE: -</div>
+  <button id="btnEndCall" style="margin-top:8px;">통화 종료</button>
   <pre id="log"></pre>
 </div>
 
@@ -65,6 +66,42 @@
     uiLog("[WS ->]", type, "room=", roomId);
     if (!ws || ws.readyState !== 1) return;
     ws.send(JSON.stringify(msg));
+  }
+
+  async function endSession(reason) {
+    uiLog("[CALL] end requested", reason || "");
+    // 1) notify server (idempotent)
+    try {
+      await fetch(`${getApiBase()}/api/sessions/${encodeURIComponent(roomId)}/end`, { method: "POST" });
+    } catch (e) { console.warn("end api failed", e); }
+
+    // 2) notify peer via WS (best-effort)
+    try { wsSend("ended", { reason: reason || "user_end" }); } catch (e) {}
+
+    // 3) local cleanup
+    cleanup();
+  }
+
+  function cleanup() {
+    setText("status", "세션 종료됨");
+    try {
+      if (pc) pc.close();
+    } catch (e) {}
+    pc = null;
+
+    try {
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+    } catch (e) {}
+    localStream = null;
+
+    try {
+      if (ws && ws.readyState === 1) ws.close();
+    } catch (e) {}
+    ws = null;
+
+    setText("pcStatus", "PC: closed");
+    setText("wsStatus", "WS: closed");
+    setText("iceStatus", "ICE: -");
   }
 
   async function flushPendingCandidates() {
@@ -180,8 +217,14 @@
       } else if (msg.type === "candidate") {
         if (pc.remoteDescription) await pc.addIceCandidate(msg.payload);
         else pendingRemoteCandidates.push(msg.payload);
+      } else if (msg.type === "ended") {
+        uiLog("[CALL] ended by peer", msg.payload);
+        cleanup();
       }
     };
+
+    const endBtn = $("btnEndCall");
+    if (endBtn) endBtn.onclick = () => endSession("customer_click");
   })();
 </script>
 

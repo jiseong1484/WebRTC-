@@ -55,6 +55,7 @@
     <button id="btnCreatePC" disabled>PC 만들기</button>
     <button id="btnConnectWS" disabled>WS 연결</button>
     <button id="btnStartCall" disabled>통화 시작(Offer)</button>
+    <button id="btnEndCall" disabled>통화 종료</button>
   </div>
   <div class="row">
     <div style="flex:1; min-width: 320px;">
@@ -114,6 +115,56 @@
       return;
     }
     ws.send(JSON.stringify(msg));
+  }
+
+  async function endSession(reason) {
+    if (!roomId) { alert("sessionId(roomId)가 없습니다. 먼저 세션을 생성하세요."); return; }
+    uiLog("[CALL] end requested", reason || "");
+
+    // 1) notify server (best-effort, idempotent)
+    try {
+      await fetch(`${getApiBase()}/api/sessions/${encodeURIComponent(roomId)}/end`, { method: "POST" });
+    } catch (e) {
+      console.warn("end api failed", e);
+    }
+
+    // 2) notify peer via WS (best-effort)
+    try {
+      wsSend("ended", { reason: reason || "agent_end" });
+    } catch (e) {}
+
+    // 3) local cleanup
+    cleanup();
+  }
+
+  function cleanup() {
+    setText("sessionStatus", "세션 종료됨");
+
+    try {
+      if (pc) pc.close();
+    } catch (e) {}
+    pc = null;
+
+    try {
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+    } catch (e) {}
+    localStream = null;
+
+    try {
+      if (ws && ws.readyState === 1) ws.close();
+    } catch (e) {}
+    ws = null;
+
+    setText("pcStatus", "PC: closed");
+    setText("wsStatus", "WS: closed");
+    setText("iceStatus", "ICE: -");
+
+    // 버튼 상태 정리
+    $("btnStartCall").disabled = true;
+    $("btnConnectWS").disabled = true;
+    $("btnCreatePC").disabled = true;
+    $("btnStartMedia").disabled = true;
+    $("btnEndCall").disabled = true;
   }
 
   async function flushPendingCandidates() {
@@ -189,6 +240,8 @@
     }
   };
 
+  $("btnEndCall").onclick = () => endSession("agent_click");
+
   // ===== Media =====
   $("btnStartMedia").onclick = async () => {
     if (!roomId) { alert("먼저 세션을 생성하세요."); return; }
@@ -243,6 +296,7 @@
       uiLog("[WS] open");
       wsSend("join", {});
       $("btnStartCall").disabled = false;
+      $("btnEndCall").disabled = false;
     };
 
     ws.onclose = () => {
@@ -277,6 +331,9 @@
       } else if (msg.type === "candidate") {
         if (pc.remoteDescription) await pc.addIceCandidate(msg.payload);
         else pendingRemoteCandidates.push(msg.payload);
+      } else if (msg.type === "ended") {
+        uiLog("[CALL] ended by peer", msg.payload);
+        cleanup();
       }
     };
   };
@@ -292,6 +349,11 @@
     await pc.setLocalDescription(offer);
     wsSend("offer", pc.localDescription);
   };
+
+  window.addEventListener("beforeunload", () => {
+    try { if (roomId) { navigator.sendBeacon(`${getApiBase()}/api/sessions/${encodeURIComponent(roomId)}/end`); } } catch (e) {}
+    try { if (ws && ws.readyState === 1) { wsSend("ended", { reason: "agent_unload" }); } } catch (e) {}
+  });
 </script>
 </body>
 </html>

@@ -49,4 +49,21 @@ public class SessionService {
     public String getFrontendBaseUrl() {
         return props.getFrontendBaseUrl();
     }
+
+    public Session endSessionOrThrow(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("sessionId is required");
+        }
+
+        // 존재 확인 (없으면 예외)
+        Session s = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+
+        // 종료 처리 (in-memory 구현은 내부에서 s.end() 호출하도록 되어있음)
+        sessionRepository.end(sessionId);
+
+        // 최신 상태 반환
+        return sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalStateException("Session disappeared after end"));
+    }
 }

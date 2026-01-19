@@ -3,6 +3,7 @@ package com.fermi.signaling.api.session;
 import com.fermi.signaling.api.session.dto.CreateSessionRequest;
 import com.fermi.signaling.api.session.dto.CreateSessionResponse;
 import com.fermi.signaling.api.session.dto.GetSessionResponse;
+import com.fermi.signaling.api.session.dto.EndSessionResponse;
 import com.fermi.signaling.application.session.SessionService;
 import com.fermi.signaling.domain.session.Session;
 import org.springframework.web.bind.annotation.*;
@@ -40,6 +41,16 @@ public class SessionController {
                 s.getSessionId(),
                 s.getStatus(),
                 s.getCreatedAt(),
+                s.getExpiresAt()
+        );
+    }
+
+    @PostMapping("/{sessionId}/end")
+    public EndSessionResponse end(@PathVariable String sessionId) {
+        Session s = sessionService.endSessionOrThrow(sessionId);
+        return new EndSessionResponse(
+                s.getSessionId(),
+                s.getStatus(),
                 s.getExpiresAt()
         );
     }
