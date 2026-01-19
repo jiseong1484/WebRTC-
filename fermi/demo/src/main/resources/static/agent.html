@@ -39,6 +39,7 @@
   <div class="row">
     <button id="btnCreateSession">세션 생성</button>
     <button id="btnCopyCustomerUrl" disabled>고객 링크 복사</button>
+    <button id="btnNextCall" disabled>다음 통화</button>
   </div>
   <div class="row" style="margin-top:10px;">
     <div style="flex:1; min-width: 220px;">
@@ -181,10 +182,8 @@
     } catch (e) {}
     pc = null;
 
-    try {
-      if (localStream) localStream.getTracks().forEach(t => t.stop());
-    } catch (e) {}
-    localStream = null;
+    // NOTE: keep camera/mic on for seamless “다음 통화”.
+    // If you want a separate “미디어 끄기” later, stop tracks there.
 
     try {
       if (ws && ws.readyState === 1) ws.close();
@@ -199,8 +198,30 @@
     $("btnStartCall").disabled = true;
     $("btnConnectWS").disabled = true;
     $("btnCreatePC").disabled = true;
-    $("btnStartMedia").disabled = true;
+    // $("btnStartMedia").disabled = true; // removed to allow seamless next call
     $("btnEndCall").disabled = true;
+  }
+
+  function cleanupPeerOnly() {
+    // Close only peer connection + websocket. Keep localStream alive.
+    try { if (pc) pc.close(); } catch (e) {}
+    pc = null;
+
+    try { if (ws && ws.readyState === 1) ws.close(); } catch (e) {}
+    ws = null;
+
+    pendingRemoteCandidates = [];
+
+    setText("pcStatus", "PC: -");
+    setText("wsStatus", "WS: -");
+    setText("iceStatus", "ICE: -");
+
+    $("btnStartCall").disabled = true;
+    $("btnConnectWS").disabled = true;
+    $("btnEndCall").disabled = true;
+
+    // If media is on, allow creating a new PC immediately.
+    $("btnCreatePC").disabled = !localStream;
   }
 
   async function flushPendingCandidates() {
@@ -229,38 +250,48 @@
     return `${location.origin}/join.html?sessionId=${encodeURIComponent(sessionId)}`;
   }
 
+  async function createSessionAndUpdateUi() {
+    const agentId = $("agentId").value.trim();
+    const customerId = $("customerId").value.trim();
+    if (!agentId) { alert("agentId를 입력하세요"); return null; }
+    if (!customerId) { alert("customerId를 입력하세요(Phase4에서는 매칭에서 자동으로 채워질 예정)"); return null; }
+
+    setText("sessionStatus", "세션 생성 중...");
+
+    const res = await fetch(`${getApiBase()}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, customerId })
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`create session failed: ${res.status} ${text}`);
+    }
+
+    const data = await res.json();
+
+    roomId = data.sessionId;
+    $("sessionId").value = data.sessionId;
+
+    // Prefer server-provided customerUrl (correct in Render/배포)
+    $("customerUrl").value = data.customerUrl || getCustomerJoinUrl(data.sessionId);
+
+    $("btnCopyCustomerUrl").disabled = false;
+    $("btnNextCall").disabled = false;
+
+    setText("sessionStatus", `세션 생성 완료. 만료: ${data.expiresAt}`);
+
+    // Allow media start after session exists
+    $("btnStartMedia").disabled = false;
+
+    return data;
+  }
+
   // ===== Phase3: create session =====
   $("btnCreateSession").onclick = async () => {
     try {
-      const agentId = $("agentId").value.trim();
-      const customerId = $("customerId").value.trim();
-      if (!agentId) { alert("agentId를 입력하세요"); return; }
-      if (!customerId) { alert("customerId를 입력하세요(Phase4에서는 매칭에서 자동으로 채워질 예정)"); return; }
-
-      setText("sessionStatus", "세션 생성 중...");
-
-      const res = await fetch(`${getApiBase()}/api/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId, customerId })
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`create session failed: ${res.status} ${text}`);
-      }
-
-      const data = await res.json();
-
-      roomId = data.sessionId;
-      $("sessionId").value = data.sessionId;
-
-      // 서버가 customerUrl을 내려주면 그걸 우선 사용 (Render/배포 환경에서 정확)
-      $("customerUrl").value = data.customerUrl || getCustomerJoinUrl(data.sessionId);
-      $("btnCopyCustomerUrl").disabled = false;
-
-      setText("sessionStatus", `세션 생성 완료. 만료: ${data.expiresAt}`);
-      $("btnStartMedia").disabled = false;
+      await createSessionAndUpdateUi();
     } catch (e) {
       console.error(e);
       setText("sessionStatus", "세션 생성 실패: " + e.message);
@@ -275,6 +306,48 @@
       setText("sessionStatus", "복사 실패(브라우저 권한). 링크를 직접 선택해서 복사해줘.");
     }
   };
+
+  $("btnNextCall").onclick = async () => {
+    if (!roomId) { alert("먼저 세션을 생성하세요."); return; }
+
+    uiLog("[NEXT] next call clicked. current room=", roomId);
+
+    // Best-effort: notify peer + end current session on server
+    try { wsSend("ended", { reason: "next_call" }); } catch (e) {}
+    try {
+      await fetch(`${getApiBase()}/api/sessions/${encodeURIComponent(roomId)}/end`, { method: "POST" });
+    } catch (e) {
+      console.warn("end api failed", e);
+    }
+
+    // Close PC/WS only (keep media)
+    cleanupPeerOnly();
+
+    // Create a new session and update UI
+    let data;
+    try {
+      data = await createSessionAndUpdateUi();
+    } catch (e) {
+      console.error(e);
+      setText("sessionStatus", "다음 통화 세션 생성 실패: " + e.message);
+      return;
+    }
+
+    // Seamless: if media is already on, auto prepare PC + WS
+    if (localStream) {
+      // Recreate PC
+      $("btnCreatePC").disabled = false;
+      await $("btnCreatePC").onclick();
+
+      // Connect WS and join new room
+      await $("btnConnectWS").onclick();
+
+      setText("sessionStatus", `다음 통화 준비 완료. (sessionId=${data.sessionId})`);
+    } else {
+      setText("sessionStatus", `다음 통화 세션 생성 완료. 카메라/마이크를 켜주세요. (sessionId=${data.sessionId})`);
+    }
+  };
+
 
   $("btnEndCall").onclick = () => endSession("agent_click");
 
@@ -370,7 +443,7 @@
       } else if (msg.type === "ended") {
         uiLog("[CALL] ended by peer", msg.payload);
         showEndModal("상대가 통화를 종료했습니다.");
-        cleanup();
+        cleanupPeerOnly();
       }
     };
   };
