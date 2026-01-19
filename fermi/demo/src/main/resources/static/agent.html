@@ -387,21 +387,6 @@
     wsSend("offer", pc.localDescription);
   };
 
-  // ===== Modal handlers =====
-  const okBtn = $("btnEndModalOk");
-  if (okBtn) okBtn.onclick = () => hideEndModal();
-
-  const endModal = $("endModal");
-  if (endModal) {
-    endModal.addEventListener("click", (e) => {
-      if (e.target === endModal || e.target.classList.contains("modal__backdrop")) {
-        hideEndModal();
-      }
-    });
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") hideEndModal();
-    });
-  }
 
   window.addEventListener("beforeunload", () => {
     try { if (roomId) { navigator.sendBeacon(`${getApiBase()}/api/sessions/${encodeURIComponent(roomId)}/end`); } } catch (e) {}
@@ -421,4 +406,23 @@
   </div>
 </div>
 </body>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const okBtn = document.getElementById('btnEndModalOk');
+    if (okBtn) okBtn.onclick = () => hideEndModal();
+
+    const endModal = document.getElementById('endModal');
+    if (endModal) {
+      endModal.addEventListener('click', (e) => {
+        if (e.target === endModal || e.target.classList.contains('modal__backdrop')) {
+          hideEndModal();
+        }
+      });
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') hideEndModal();
+    });
+  });
+</script>
 </html>
