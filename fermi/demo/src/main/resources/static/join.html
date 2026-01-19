@@ -43,12 +43,18 @@
 </div>
 
 <div class="card">
-  <div style="flex:1; min-width: 320px; transform: scaleX(-1); -webkit-transform: scaleX(-1);"></div>
-    <div class="hint">Local</div> 
-    <video id="localVideo" autoplay playsinline muted></video>
-  <div style="flex:1; min-width: 320px; transform: scaleX(-1); -webkit-transform: scaleX(-1);"></div>
-    <div class="hint" style="margin-top:10px;">Remote</div>
-  <video id="remoteVideo" autoplay playsinline></video>
+  <h3>영상</h3>
+  <div class="row">
+    <div style="flex:1; min-width: 320px;">
+      <div class="hint">Local</div>
+      <video id="localVideo" autoplay playsinline muted style="transform: scaleX(-1); -webkit-transform: scaleX(-1);"></video>
+    </div>
+
+    <div style="flex:1; min-width: 320px;">
+      <div class="hint">Remote</div>
+      <video id="remoteVideo" autoplay playsinline style="transform: scaleX(-1); -webkit-transform: scaleX(-1);"></video>
+    </div>
+  </div>
 </div>
 
 <script>
