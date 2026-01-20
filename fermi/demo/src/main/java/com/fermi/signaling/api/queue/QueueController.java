@@ -17,6 +17,7 @@ public class QueueController {
         this.queueService = queueService;
     }
 
+    //join.html 접속 -> customer ID 생성 -> queue join
     @PostMapping("/join")
     public ResponseEntity<?> joinQueue(@RequestBody JoinQueueRequest request) {
         if (request.getCustomerId() == null || request.getCustomerId().isBlank()) {
@@ -31,6 +32,7 @@ public class QueueController {
         }
     }
 
+    //주기적 호출 -> 대기 고객 수 확인
     @GetMapping("/size")
     public ResponseEntity<?> getQueueSize() {
         try {
