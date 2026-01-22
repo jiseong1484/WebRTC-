@@ -1,0 +1,26 @@
+# render.yaml
+# This file specifies the services for your application for deployment on Render.
+services:
+  - type: pserv # Private Service: The Spring Boot backend. Not accessible from the public internet.
+    name: fermi-app
+    runtime: docker
+    autoDeploy: false
+    # Paths are relative to the repository root
+    dockerfilePath: fermi/demo/Dockerfile
+    dockerContext: fermi/demo
+
+  - type: web # Web Service: The Nginx proxy. Receives public traffic.
+    name: fermi-proxy
+    runtime: docker
+    autoDeploy: false
+    # Paths are relative to the repository root
+    dockerfilePath: fermi/demo/nginx/Dockerfile
+    dockerContext: fermi/demo/nginx
+    envVars:
+      # Inject the internal hostname of the backend service into the UPSTREAM_HOST env var.
+      # Nginx will use this to proxy requests to the backend.
+      - key: UPSTREAM_HOST
+        fromService:
+          type: pserv
+          name: fermi-app
+          property: host # Use the internal host address of the fermi-app service
