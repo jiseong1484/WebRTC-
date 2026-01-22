@@ -1,25 +1,32 @@
-# Forcing a new build to clear Render's cache
-# render.yaml
-# This file specifies the services for your application for deployment on Render.
+# render-free.yaml
+# 이 설정은 무료 등급 호환성을 위한 듀얼 WEB SERVICE 구성입니다.
+# 이것은 안전한 DMZ 아키텍처가 아니며, 백엔드 애플리케이션을 인터넷에 직접 노출시킵니다.
+# 실 서비스(금융권, 관공서)에 판매하는 제품에서는 물론 서버비를 내고 render-dmz.yaml을 사용하면 됩니다.
 services:
-  - type: pserv # Private Service: The Spring Boot backend. Not accessible from the public internet.
-    name: fermi-app
+  - type: web # 'pserv'에서 변경. 이 서비스는 이제 외부 공개됩니다.
+    name: fermi-app-free
     runtime: docker
     autoDeploy: false
-    # Path to the Dockerfile, relative to the repository root
-    dockerfilePath: fermi/demo/Dockerfile
+    # 빌드 컨텍스트 및 Dockerfile 경로
+    dockerContext: fermi/demo
+    dockerfilePath: Dockerfile
+    # Web Service에는 Health Check를 다시 추가합니다.
+    healthCheck:
+      path: /actuator/health
+      port: 8080
 
-  - type: web # Web Service: The Nginx proxy. Receives public traffic.
-    name: fermi-proxy
+  - type: web # 이 서비스는 원래 'web' 타입이었습니다.
+    name: fermi-proxy-free
     runtime: docker
     autoDeploy: false
-    # Path to the Dockerfile, relative to the repository root
-    dockerfilePath: fermi/demo/nginx/Dockerfile
+    # 빌드 컨텍스트 및 Dockerfile 경로
+    dockerContext: fermi/demo/nginx
+    dockerfilePath: Dockerfile
     envVars:
-      # Inject the internal hostname of the backend service into the UPSTREAM_HOST env var.
-      # Nginx will use this to proxy requests to the backend.
+      # UPSTREAM_HOST 환경 변수에 백엔드 서비스의 내부 호스트 이름을 주입합니다.
+      # 이제 백엔드 서비스도 'web' 타입입니다.
       - key: UPSTREAM_HOST
         fromService:
-          type: pserv
-          name: fermi-app
-          property: host # Use the internal host address of the fermi-app service
+          type: web
+          name: fermi-app-free # 위에서 정의한 app 서비스 이름과 일치해야 함
+          property: host
