@@ -14,7 +14,47 @@
         .hint { color: #555; font-size: 14px; }
         video { width: 100%; max-height: 320px; background: #000; border-radius: 12px; }
         pre { background: #f6f6f6; padding: 10px; border-radius: 10px; overflow: auto; height: 120px; }
-        #call-ui { display: none; }
+        #call-ui, #co-browsing-container { display: none; }
+
+        /* Co-browsing and Modal Styles */
+        #pdf-viewer-container {
+            position: relative;
+            width: 100%;
+            /* height is set by canvas */
+            border: 1px solid #ccc;
+            min-height: 600px; /* Provide a minimum height */
+        }
+        #pdf-viewer-container canvas {
+            display: block;
+            margin: 0 auto;
+        }
+        #pdf-pagination-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            margin-top: 12px;
+        }
+        #remote-cursor {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%231e90ff"><path d="M10.6,12.7L15,17.1c0.4,0.4,0.4,1,0,1.4c-0.4,0.4-1,0.4-1.4,0L9.2,13.4l-2.7,4.2c-0.3,0.5-0.9,0.7-1.4,0.4c-0.5-0.3-0.7-0.9-0.4-1.4l3.1-4.9L3.2,9.6C2.7,9.2,2.6,8.6,3,8.2c0.3-0.5,0.9-0.6,1.4-0.3l4.6,2.9l2.5-4.1c0.3-0.5,0.9-0.7,1.4-0.4c0.5,0.3,0.7,0.9,0.4,1.4L10.6,12.7z"/></svg>');
+            background-size: contain;
+            display: none; /* Initially hidden */
+            z-index: 10;
+            pointer-events: none; /* Clicks go through the cursor */
+        }
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 100;
+        }
+        .modal-content { background: #fff; padding: 20px; border-radius: 12px; min-width: 300px; max-width: 500px; }
+        .modal-content h3 { margin-top: 0; }
+        .modal-content ul { list-style: none; padding: 0; max-height: 300px; overflow-y: auto; }
+        .modal-content li { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; }
+        .modal-content li:hover { background: #f0f0f0; }
+        .modal-close { float: right; cursor: pointer; font-size: 20px; border: none; background: none; }
     </style>
 </head>
 <body>
@@ -36,6 +76,9 @@
 <div class="card" id="call-ui">
     <div class="row">
         <button id="btnEndCall">상담 종료</button>
+        <button id="btnSharePdf" disabled>PDF 공유</button>
+        <button id="btnRequestSignature" disabled>서명 요청</button>
+        <button id="btnControl" disabled>제어권 전달</button>
     </div>
     <div class="row" style="margin-top: 1rem;">
         <div style="flex:1;">
@@ -59,6 +102,35 @@
     </div>
 </div>
 
+<!-- Co-browsing UI -->
+<div class="card" id="co-browsing-container">
+    <h3>코브라우징</h3>
+    <div id="pdf-viewer-container">
+        <!-- Canvas for PDF page will be inserted here -->
+        <div id="remote-cursor"></div>
+    </div>
+    <div id="pdf-pagination-controls">
+        <button id="pdf-prev" disabled>&laquo; 이전</button>
+        <span id="pdf-page-info"></span>
+        <button id="pdf-next" disabled>다음 &raquo;</button>
+    </div>
+</div>
+
+<!-- PDF Selection Modal -->
+<div class="modal-overlay" id="pdf-modal">
+    <div class="modal-content">
+        <button class="modal-close" id="pdf-modal-close">&times;</button>
+        <h3>공유할 PDF 선택</h3>
+        <ul id="pdf-list"></ul>
+    </div>
+</div>
+
+<!-- PDF.js script -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+</script>
+
 <script>
     const $ = (id) => document.getElementById(id);
 
@@ -68,6 +140,29 @@
     let pc = null;
     let localStream = null;
     let queueStatusPoller = null;
+    let dataChannel = null;
+
+    // Co-browsing state
+    let isController = false;
+    let pdfDoc = null;
+    let currentPageNum = 1;
+    let pdfIsLoading = false;
+    let pdfFields = []; // Stores field definitions from JSON
+    let fieldValues = {}; // Stores current values for fields (signature image, checkbox state, text)
+
+
+    function throttle(func, limit) {
+        let inThrottle;
+        return function() {
+            const args = arguments;
+            const context = this;
+            if (!inThrottle) {
+                func.apply(context, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        }
+    }
 
     function uiLog(...args) {
         console.log(...args);
@@ -76,7 +171,7 @@
         el.scrollTop = el.scrollHeight;
     }
     function setText(id, msg) { const el = $(id); if (el) el.textContent = msg; }
-    function show(id) { $(id).style.display = 'block'; }
+    function show(id, display = 'block') { $(id).style.display = display; }
     function hide(id) { $(id).style.display = 'none'; }
 
     function getWsUrl() {
@@ -101,9 +196,15 @@
 
     function wsSend(type, payload) {
         const msg = { type, roomId, payload };
-        uiLog("[WS ->]", type, "room=", roomId);
         if (!ws || ws.readyState !== 1) return;
         ws.send(JSON.stringify(msg));
+    }
+    
+    function dcSend(type, payload) {
+        if (dataChannel && dataChannel.readyState === 'open') {
+            const msg = JSON.stringify({ type, payload });
+            dataChannel.send(msg);
+        }
     }
 
     function wsRegister() {
@@ -112,31 +213,30 @@
         ws.send(JSON.stringify(msg));
     }
     
-    // 현재 통화 관련 상태만 초기화 (미디어, 기본 WS 연결 유지)
     async function cleanupPeerConnection() {
-        if (pc) {
-            try { pc.close(); } catch (e) {}
-            pc = null;
-        }
+        if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+        if (dataChannel) { try { dataChannel.close(); } catch(e) {} dataChannel = null; }
+        
         setText("pcStatus", "PC: -");
         setText("iceStatus", "ICE: -");
         $("remoteVideo").srcObject = null;
         $("log").textContent = "";
         roomId = "";
         
-        // 다시 다음 통화를 받을 수 있도록 버튼 활성화 및 상태 변경
         $("btnEndCall").disabled = true;
+        $("btnSharePdf").disabled = true;
+        $("btnControl").disabled = true;
+        $("btnRequestSignature").disabled = true; // Disable the old button
         hide("call-ui");
+        hide("co-browsing-container");
         
         try {
-            // 중요: 서버에 상담사 상태를 다시 AVAILABLE로 변경하도록 요청
             const response = await fetch(`${getApiBase()}/api/agents/${agentId}/available`, { method: "POST" });
             if (!response.ok) throw new Error("Failed to reset agent status");
             
             setText("status", "온라인. 다음 통화를 기다리는 중...");
             $("btnNextCall").disabled = false;
             
-            // 통화 종료 후 큐 상태 폴링 다시 시작
             updateQueueSize();
             if (queueStatusPoller) clearInterval(queueStatusPoller);
             queueStatusPoller = setInterval(updateQueueSize, 5000);
@@ -146,69 +246,221 @@
     }
     
     async function startWebRTC() {
-        if (!localStream) {
-            uiLog("!! Local stream not ready");
-            return;
-        }
+        if (!localStream) { uiLog("!! Local stream not ready"); return; }
         show("call-ui");
         $("btnEndCall").disabled = false;
+        $("btnSharePdf").disabled = false;
+        $("btnRequestSignature").disabled = true; // Ensure old button is disabled
 
-        // 통화 시작 시 큐 상태 폴링 중지
         if (queueStatusPoller) clearInterval(queueStatusPoller);
         setText("queueStatus", "");
 
-        const iceConfiguration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }, // Public STUN server
-                // {
-                //     urls: "turn:61.74.145.110:3478?transport=udp",
-                //     username: "fermi_user",
-                //     credential: "411c0df2bd576db828c933c537e8841a"
-                // },
-                // {
-                //     urls: "turns:your-turn-server.com:443?transport=tcp",
-                //     username: "your_username",
-                //     credential: "your_password"
-                // }
-            ]
-        };
+        const iceConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
         pc = new RTCPeerConnection(iceConfiguration);
+
+        setupDataChannel();
 
         localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-        pc.ontrack = (event) => {
-            $("remoteVideo").srcObject = event.streams[0];
-            uiLog("[PC] ontrack remote stream");
-        };
-
-        pc.onicecandidate = (event) => {
-            if (event.candidate) {
-                uiLog("[ICE local] generated");
-                wsSend("candidate", event.candidate);
-            }
-        };
-
+        pc.ontrack = (event) => { $("remoteVideo").srcObject = event.streams[0]; };
+        pc.onicecandidate = (event) => { if (event.candidate) { wsSend("candidate", event.candidate); } };
         pc.onconnectionstatechange = () => setText("pcStatus", `PC: ${pc.connectionState}`);
         pc.oniceconnectionstatechange = () => setText("iceStatus", `ICE: ${pc.iceConnectionState}`);
         setText("pcStatus", "PC: created");
 
-        // Join room, but DO NOT send offer immediately. Wait for peer_ready.
         wsSend("join", {});
     }
+
+    function setupDataChannel() {
+        dataChannel = pc.createDataChannel("co-browsing");
+        uiLog('[DC] created');
+        dataChannel.onopen = () => uiLog('[DC] opened');
+        dataChannel.onclose = () => uiLog('[DC] closed');
+        dataChannel.onmessage = handleDataChannelMessage;
+    }
+
+    function handleDataChannelMessage(event) {
+        const msg = JSON.parse(event.data);
+        uiLog('[DC <-]', msg.type);
+
+        switch (msg.type) {
+            case 'control_change':
+                isController = msg.payload.controller === 'agent'; // Agent is controller if message says 'agent'
+                const btn = $("btnControl");
+                if (isController) {
+                    btn.textContent = '제어권 전달';
+                    btn.style.backgroundColor = '';
+                } else {
+                    btn.textContent = '제어권 회수';
+                    btn.style.backgroundColor = '#d4edda';
+                }
+                break;
+            case 'field_updated':
+                uiLog(`Field ${msg.payload.fieldId} updated by customer.`);
+                fieldValues[msg.payload.fieldId] = msg.payload.value;
+                renderPage(currentPageNum); // Re-render current page to show updated field
+                break;
+        }
+    }
     
+    // This function is now more generic to draw any field value
+    async function drawFieldValues(pageNumber, canvasContext, viewport) {
+        const scale = viewport.scale;
+        const fieldsOnPage = pdfFields.filter(f => f.page === pageNumber);
+        for (const field of fieldsOnPage) {
+            const value = fieldValues[field.fieldId];
+            if (!value) continue;
+            const { x, y, width, height } = field.rect;
+            const scaledX = x;
+            const scaledWidth = width;
+            const scaledHeight = height;
+            const scaledY = y;
+
+            if (field.type === 'signature') {
+                const img = new Image();
+                img.src = value;
+                await new Promise(resolve => img.onload = resolve);
+                canvasContext.drawImage(img, scaledX, scaledY, scaledWidth, scaledHeight);
+            } else if (field.type === 'checkbox') {
+                if (value === true) {
+                    canvasContext.font = `${scaledHeight * 0.8}px Arial`;
+                    canvasContext.fillStyle = 'green';
+                    canvasContext.fillText('✔', scaledX, scaledY + scaledHeight * 0.9);
+                }
+            } else if (field.type === 'keyboard') {
+                canvasContext.font = `${scaledHeight * 0.7}px Arial`;
+                canvasContext.fillStyle = 'black';
+                canvasContext.fillText(value || '', scaledX, scaledY + scaledHeight * 0.7);
+            }
+        }
+    }
+
+    function drawFieldOverlays(pageNumber, canvasContext, viewport) {
+        const scale = viewport.scale;
+        const fieldsOnPage = pdfFields.filter(f => f.page === pageNumber);
+        for (const field of fieldsOnPage) {
+            const { x, y, width, height } = field.rect;
+            const scaledX = x;
+            const scaledWidth = width;
+            const scaledHeight = height;
+            const scaledY = y;
+
+            canvasContext.save();
+            canvasContext.globalAlpha = 0.3; // Semi-transparent overlay
+
+            switch (field.type) {
+                case 'signature':
+                    canvasContext.fillStyle = 'blue';
+                    break;
+                case 'checkbox':
+                    canvasContext.fillStyle = 'green';
+                    break;
+                case 'keyboard':
+                    canvasContext.fillStyle = 'yellow';
+                    break;
+                default:
+                    canvasContext.fillStyle = 'gray';
+            }
+            canvasContext.fillRect(scaledX, scaledY, scaledWidth, scaledHeight);
+            canvasContext.restore();
+
+            // Optional: Add text label for field type
+            canvasContext.save();
+            canvasContext.font = `${scaledHeight * 0.2}px Arial`;
+            canvasContext.fillStyle = 'black';
+            canvasContext.fillText(field.type, scaledX + 2, scaledY + scaledHeight - 2);
+            canvasContext.restore();
+        }
+    }
+
+    async function startPdfSharing(filename) {
+        uiLog(`Starting PDF sharing for: ${filename}`);
+        isController = true; // Agent is controller by default
+        $("btnControl").disabled = false;
+        $("btnRequestSignature").disabled = true; // Old button disabled
+        
+        // Fetch field definitions
+        const jsonFilename = filename.replace('.pdf', '.json');
+        try {
+            const response = await fetch(`${getApiBase()}/documents/${jsonFilename}`);
+            if (response.ok) {
+                pdfFields = await response.json();
+                uiLog(`Loaded ${pdfFields.length} fields for ${filename}`, pdfFields);
+            } else {
+                pdfFields = []; // No fields JSON found
+                uiLog(`No field definitions found for ${filename}`);
+            }
+        } catch (error) {
+            uiLog(`Error fetching field definitions: ${error}`);
+            pdfFields = [];
+        }
+
+        // Reset field values for new PDF
+        fieldValues = {};
+
+        dcSend('load_pdf', { filename });
+        loadPdf(filename);
+    }
+
+    async function loadPdf(filename) {
+        const url = `${getApiBase()}/documents/${filename}`;
+        show('co-browsing-container');
+        
+        try {
+            pdfDoc = await pdfjsLib.getDocument(url).promise;
+            uiLog(`PDF loaded with ${pdfDoc.numPages} pages.`);
+            currentPageNum = 1;
+            renderPage(currentPageNum);
+        } catch (error) {
+            uiLog('Error loading PDF:', error);
+        }
+    }
+
+    async function renderPage(num) {
+        if (pdfIsLoading || !pdfDoc) return;
+        pdfIsLoading = true;
+
+        const page = await pdfDoc.getPage(num);
+        
+        const container = $("pdf-viewer-container"); // Re-add container definition
+        const scale = container.clientWidth / page.getViewport({ scale: 1.0 }).width;
+        const viewport = page.getViewport({ scale: scale });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+
+        // Clear container and append new canvas
+        container.innerHTML = '<div id="remote-cursor"></div>';
+        container.appendChild(canvas);
+        
+        await page.render({ canvasContext: context, viewport: viewport }).promise;
+        uiLog(`Page ${num} rendered`);
+        
+        // Draw field overlays and values
+        drawFieldOverlays(num, context, viewport);
+        await drawFieldValues(num, context, viewport); // Await drawing values that might be images
+
+        pdfIsLoading = false;
+
+        // Update UI
+        currentPageNum = num;
+        $("pdf-page-info").textContent = `${num} / ${pdfDoc.numPages}`;
+        $("pdf-prev").disabled = num <= 1;
+        $("pdf-next").disabled = num >= pdfDoc.numPages;
+    }
+
+
     // ===== Bootstrapping and Event Handlers =====
 
     $("btnGoOnline").onclick = async () => {
         agentId = $("agentId").value.trim();
-        if (!agentId) {
-            alert("상담사 ID를 입력하세요.");
-            return;
-        }
+        if (!agentId) { alert("상담사 ID를 입력하세요."); return; }
 
         $("btnGoOnline").disabled = true;
         setText("status", "카메라/마이크 권한을 허용해주세요...");
 
-        // 1. Get Media
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             $("localVideo").srcObject = localStream;
@@ -218,14 +470,11 @@
             return;
         }
 
-        // 2. Connect WebSocket
         setText("status", "서버에 연결 중...");
         ws = new WebSocket(getWsUrl());
 
         ws.onopen = async () => {
             setText("wsStatus", "WS: connected");
-            
-            // 3. Register and set status to AVAILABLE
             wsRegister();
             try {
                 const response = await fetch(`${getApiBase()}/api/agents/${agentId}/available`, { method: "POST" });
@@ -233,12 +482,11 @@
                 
                 setText("status", "온라인. '다음 통화' 버튼을 눌러주세요.");
                 $("btnNextCall").disabled = false;
-                $("agentId").disabled = true; // Don't allow changing ID while online
+                $("agentId").disabled = true;
 
-                // 4. Start polling for queue size
-                updateQueueSize(); // initial call
+                updateQueueSize();
                 if (queueStatusPoller) clearInterval(queueStatusPoller);
-                queueStatusPoller = setInterval(updateQueueSize, 5000); // every 5 seconds
+                queueStatusPoller = setInterval(updateQueueSize, 5000);
             } catch (e) {
                 setText("status", `온라인 전환 실패: ${e.message}`);
                 $("btnGoOnline").disabled = false;
@@ -248,7 +496,6 @@
         ws.onclose = () => {
              setText("wsStatus", "WS: closed");
              if (queueStatusPoller) clearInterval(queueStatusPoller);
-             // Handle potential disconnects
         };
         ws.onerror = () => { setText("wsStatus", "WS: error"); };
         
@@ -257,15 +504,14 @@
             try { msg = JSON.parse(evt.data); } 
             catch (e) { console.error("JSON parse failed", e, evt.data); return; }
 
-            uiLog("[WS <-]", msg);
+            uiLog("[WS <-", msg.type);
 
             if (msg.type === "session-matched" && msg.agentId === agentId) {
                 roomId = msg.sessionId;
                 setText("status", `고객(${msg.customerId})과 연결되었습니다. 통화를 시작합니다...`);
-                await startWebRTC(); // This now only sets up PC and joins room, doesn't send offer
+                await startWebRTC();
             }
-            else if (msg.type === "peer_ready" && msg.roomId === roomId) { // NEW: Handle peer_ready signal
-                uiLog("[WS] Peer is ready, sending offer.");
+            else if (msg.type === "peer_ready" && msg.roomId === roomId) {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 wsSend("offer", offer);
@@ -274,12 +520,9 @@
                 if(pc) await pc.setRemoteDescription(msg.payload);
             }
             else if (msg.type === "candidate") {
-                if(pc) {
-                    try { await pc.addIceCandidate(msg.payload); } catch(e) { console.error(e); }
-                }
+                if(pc) { try { await pc.addIceCandidate(msg.payload); } catch(e) { console.error(e); } }
             }
             else if (msg.type === "ended") {
-                uiLog("[CALL] ended by peer", msg.payload);
                 await cleanupPeerConnection();
             }
         };
@@ -287,27 +530,21 @@
 
     $("btnNextCall").onclick = async () => {
         if (!agentId) return;
-
         setText("status", "다음 고객을 찾는 중...");
         $("btnNextCall").disabled = true;
-
         try {
             const response = await fetch(`${getApiBase()}/api/matching/next`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ agentId })
             });
-
             const result = await response.json();
-
             if (response.ok) {
                  setText("status", "고객과 매칭되었습니다. WebSocket을 통해 연결됩니다...");
-                 // The session-matched event via WebSocket will trigger the call
             } else {
                  setText("status", `매칭 실패: ${result.reason || '알 수 없는 오류'}. 잠시 후 다시 시도하세요.`);
-                 $("btnNextCall").disabled = false; // Re-enable on failure
+                 $("btnNextCall").disabled = false;
             }
-
         } catch (e) {
             setText("status", `매칭 요청 중 오류 발생: ${e.message}`);
             $("btnNextCall").disabled = false;
@@ -318,6 +555,108 @@
         wsSend("ended", { reason: "agent_click" });
         await cleanupPeerConnection();
     };
+
+    $("btnSharePdf").onclick = async () => {
+        try {
+            const response = await fetch(`${getApiBase()}/api/documents`);
+            if (!response.ok) throw new Error('Failed to fetch PDF list');
+            const pdfFiles = await response.json();
+            
+            const listEl = $("pdf-list");
+            listEl.innerHTML = '';
+
+            pdfFiles.forEach(filename => {
+                const li = document.createElement('li');
+                li.textContent = filename;
+                li.onclick = () => {
+                    hide('pdf-modal');
+                    startPdfSharing(filename);
+                };
+                listEl.appendChild(li);
+            });
+
+            show('pdf-modal', 'flex');
+        } catch (error) {
+            uiLog('Error getting PDF list:', error);
+            alert('PDF 목록을 가져오는 데 실패했습니다.');
+        }
+    };
+
+    $("pdf-modal-close").onclick = () => hide('pdf-modal');
+
+    $("pdf-prev").onclick = () => {
+        if (currentPageNum <= 1 || !isController) return;
+        const newPageNum = currentPageNum - 1;
+        renderPage(newPageNum);
+        dcSend('page_change', { page: newPageNum });
+    };
+
+    $("pdf-next").onclick = () => {
+        if (currentPageNum >= pdfDoc.numPages || !isController) return;
+        const newPageNum = currentPageNum + 1;
+        renderPage(newPageNum);
+        dcSend('page_change', { page: newPageNum });
+    };
+
+    const throttledMouse = throttle((e) => {
+        if (!isController) return;
+        const container = $("pdf-viewer-container");
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        dcSend('mouse', { x, y });
+    }, 50);
+
+    $("pdf-viewer-container").addEventListener('mousemove', throttledMouse);
+
+    // New click handler for field activation
+    $("pdf-viewer-container").addEventListener('click', async (e) => {
+        if (!isController || !pdfDoc || pdfFields.length === 0) return;
+
+        const container = $("pdf-viewer-container");
+        const canvas = container.querySelector('canvas');
+        if (!canvas) return;
+
+        const page = await pdfDoc.getPage(currentPageNum);
+        const scale = container.clientWidth / page.getViewport({ scale: 1.0 }).width;
+        
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        const fieldsOnPage = pdfFields.filter(f => f.page === currentPageNum);
+        for (const field of fieldsOnPage) {
+            const { x, y, width, height } = field.rect;
+            const scaledX = x * scale;
+            const scaledWidth = width * scale;
+            const scaledHeight = height * scale;
+            const scaledY = y * scale;
+
+            if (clickX >= scaledX && clickX <= scaledX + scaledWidth &&
+                clickY >= scaledY && clickY <= scaledY + scaledHeight) {
+                uiLog(`Field clicked: ${field.fieldId} (Type: ${field.type})`);
+                dcSend('field_activation', { fieldId: field.fieldId });
+                // Optional: Add visual feedback for clicked field on agent side
+                break;
+            }
+        }
+    });
+
+
+    $("btnControl").onclick = () => {
+        isController = !isController;
+        dcSend('control_change', { controller: isController ? 'agent' : 'customer' });
+        const btn = $("btnControl");
+        if (isController) {
+            btn.textContent = '제어권 전달';
+            btn.style.backgroundColor = '';
+        } else {
+            btn.textContent = '제어권 회수';
+            btn.style.backgroundColor = '#d4edda';
+        }
+    };
+
+    // Old btnRequestSignature logic is now obsolete and removed.
 
 </script>
 </body>
