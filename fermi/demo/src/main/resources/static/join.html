@@ -63,9 +63,6 @@
 </div>
 
 <div class="card" id="call-ui">
-    <div class="hint" id="wsStatus">WS: -</div>
-    <div class="hint" id="pcStatus">PC: -</div>
-    <div class="hint" id="iceStatus">ICE: -</div>
     <button id="btnEndCall" style="margin-top:8px;">통화 종료</button>
 
     <div style="display: flex; gap: 1rem; margin-top: 1rem;">
@@ -119,8 +116,6 @@
 </div>
 
 
-<pre id="log"></pre>
-
 <!-- JS Libraries -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/signature_pad/1.5.3/signature_pad.min.js"></script>
@@ -163,12 +158,6 @@
         }
     }
 
-    function uiLog(...args) {
-        console.log(...args);
-        const el = $("log");
-        el.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\n";
-        el.scrollTop = el.scrollHeight;
-    }
     function setText(id, msg) { const el = $(id); if (el) el.textContent = msg; }
     function show(id, display = 'block') { $(id).style.display = display; }
     function hide(id) { $(id).style.display = 'none'; }
@@ -196,7 +185,6 @@
 
     function wsRegister() {
         const msg = { type: "register", userId: customerId };
-        uiLog("[WS ->] register", msg);
         ws.send(JSON.stringify(msg));
     }
     
@@ -232,20 +220,17 @@
         pc = new RTCPeerConnection(iceConfiguration);
 
         pc.ondatachannel = (event) => {
-            uiLog('[DC] received channel');
             dataChannel = event.channel;
             dataChannel.onmessage = handleDataChannelMessage;
-            dataChannel.onopen = () => uiLog('[DC] opened');
-            dataChannel.onclose = () => uiLog('[DC] closed');
+            dataChannel.onopen = () => {};
+            dataChannel.onclose = () => {};
         };
 
         localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
         pc.ontrack = (event) => { $("remoteVideo").srcObject = event.streams[0]; };
         pc.onicecandidate = (event) => { if (event.candidate) wsSend("candidate", event.candidate); };
-        pc.onconnectionstatechange = () => setText("pcStatus", `PC: ${pc.connectionState}`);
-        pc.oniceconnectionstatechange = () => setText("iceStatus", `ICE: ${pc.iceConnectionState}`);
-        setText("pcStatus", "PC: created");
+
 
         wsSend("join", {});
     }
@@ -277,12 +262,13 @@
 
     function handleDataChannelMessage(event) {
         const msg = JSON.parse(event.data);
-        uiLog('[DC <-]', msg.type);
 
         switch (msg.type) {
             case 'load_pdf':
                 clearActiveFields();
-                loadPdf(msg.payload.filename);
+                pdfFields = msg.payload.fields || [];
+                fieldValues = {};
+                loadPdf(msg.payload.pdfUrl);
                 break;
             case 'page_change':
                 clearActiveFields();
@@ -301,7 +287,6 @@
             case 'control_change':
                 clearActiveFields();
                 isController = msg.payload.controller === 'customer';
-                uiLog(`Control changed. I am now ${isController ? 'the controller' : 'the viewer'}.`);
                 if (isController) {
                     hide('agent-cursor');
                 }
@@ -312,10 +297,8 @@
                 
                 const fieldToActivate = pdfFields.find(f => f.fieldId === msg.payload.fieldId);
                 if (!fieldToActivate) {
-                    uiLog(`Error: Field ${msg.payload.fieldId} not found.`);
                     return;
                 }
-                uiLog(`Field activated: ${fieldToActivate.fieldId} (Type: ${fieldToActivate.type})`);
 
                 switch (fieldToActivate.type) {
                     case 'signature':
@@ -406,37 +389,18 @@
     }
     // ------------------------------------------
 
-    async function loadPdf(filename) {
-        const url = `${getApiBase()}/documents/${filename}`;
+    async function loadPdf(url) {
         show('co-browsing-container');
         
         try {
             pdfDoc = await pdfjsLib.getDocument(url).promise;
-            uiLog(`PDF loaded with ${pdfDoc.numPages} pages.`);
             currentPageNum = 1;
             
-            // Fetch field definitions
-            const jsonFilename = filename.replace('.pdf', '.json');
-            try {
-                const response = await fetch(`${getApiBase()}/documents/${jsonFilename}`);
-                if (response.ok) {
-                    pdfFields = await response.json();
-                    uiLog(`Loaded ${pdfFields.length} fields for ${filename}`);
-                } else {
-                    pdfFields = [];
-                    uiLog(`No field definitions found for ${filename}`);
-                }
-            } catch (error) {
-                uiLog(`Error fetching field definitions: ${error}`);
-                pdfFields = [];
-            }
-
             clearActiveFields();
             fieldValues = {};
 
             renderPage(currentPageNum);
         } catch (error) {
-            uiLog('Error loading PDF:', error);
         }
     }
 
@@ -459,7 +423,6 @@
         container.appendChild(canvas);
         
         await page.render({ canvasContext: context, viewport: viewport }).promise;
-        uiLog(`Page ${num} rendered`);
         
         await drawFieldValues(num, context, viewport);
 
@@ -481,20 +444,17 @@
         ws = new WebSocket(getWsUrl());
 
         ws.onopen = () => {
-            setText("wsStatus", "WS: connected");
             wsRegister();
             joinQueue();
         };
 
-        ws.onclose = () => setText("wsStatus", "WS: closed");
-        ws.onerror = () => setText("wsStatus", "WS: error");
+        ws.onclose = () => {};
+        ws.onerror = () => {};
 
         ws.onmessage = async (evt) => {
             let msg;
             try { msg = JSON.parse(evt.data); } 
-            catch (e) { console.error("JSON parse failed", e, evt.data); return; }
-
-            uiLog("[WS <-", msg.type);
+            catch (e) { return; }
 
             if (msg.type === "session-matched") {
                 roomId = msg.sessionId;
@@ -506,7 +466,7 @@
                 wsSend("answer", pc.localDescription);
             } else if (msg.type === "candidate") {
                  try { await pc.addIceCandidate(msg.payload); } 
-                 catch(e) { console.error("Error adding received ice candidate", e); }
+                 catch(e) { }
             } else if (msg.type === "ended") {
                 cleanup();
             }
@@ -600,8 +560,6 @@
                 if (clickX >= scaledX && clickX <= scaledX + scaledWidth &&
                     clickY >= scaledY && clickY <= scaledY + scaledHeight) {
                     
-                    uiLog(`Customer clicked checkbox field: ${field.fieldId}`);
-
                     const fieldId = field.fieldId;
                     const currentValue = fieldValues[fieldId] || false;
                     fieldValues[fieldId] = !currentValue;

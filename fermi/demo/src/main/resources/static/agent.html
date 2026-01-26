@@ -82,12 +82,6 @@
     </div>
     <div class="row" style="margin-top: 1rem;">
         <div style="flex:1;">
-            <div class="hint" id="wsStatus">WS: -</div>
-            <div class="hint" id="pcStatus">PC: -</div>
-            <div class="hint" id="iceStatus">ICE: -</div>
-        </div>
-        <div style="flex:1;">
-            <pre id="log"></pre>
         </div>
     </div>
     <div class="row" style="margin-top: 1rem; gap: 1rem;">
@@ -164,12 +158,6 @@
         }
     }
 
-    function uiLog(...args) {
-        console.log(...args);
-        const el = $("log");
-        el.textContent += args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\n";
-        el.scrollTop = el.scrollHeight;
-    }
     function setText(id, msg) { const el = $(id); if (el) el.textContent = msg; }
     function show(id, display = 'block') { $(id).style.display = display; }
     function hide(id) { $(id).style.display = 'none'; }
@@ -209,7 +197,6 @@
 
     function wsRegister() {
         const msg = { type: "register", userId: agentId };
-        uiLog("[WS ->] register", msg);
         ws.send(JSON.stringify(msg));
     }
     
@@ -220,7 +207,6 @@
         setText("pcStatus", "PC: -");
         setText("iceStatus", "ICE: -");
         $("remoteVideo").srcObject = null;
-        $("log").textContent = "";
         roomId = "";
         
         $("btnEndCall").disabled = true;
@@ -246,7 +232,7 @@
     }
     
     async function startWebRTC() {
-        if (!localStream) { uiLog("!! Local stream not ready"); return; }
+        if (!localStream) { return; }
         show("call-ui");
         $("btnEndCall").disabled = false;
         $("btnSharePdf").disabled = false;
@@ -264,24 +250,20 @@
 
         pc.ontrack = (event) => { $("remoteVideo").srcObject = event.streams[0]; };
         pc.onicecandidate = (event) => { if (event.candidate) { wsSend("candidate", event.candidate); } };
-        pc.onconnectionstatechange = () => setText("pcStatus", `PC: ${pc.connectionState}`);
-        pc.oniceconnectionstatechange = () => setText("iceStatus", `ICE: ${pc.iceConnectionState}`);
-        setText("pcStatus", "PC: created");
+
 
         wsSend("join", {});
     }
 
     function setupDataChannel() {
         dataChannel = pc.createDataChannel("co-browsing");
-        uiLog('[DC] created');
-        dataChannel.onopen = () => uiLog('[DC] opened');
-        dataChannel.onclose = () => uiLog('[DC] closed');
+        dataChannel.onopen = () => {};
+        dataChannel.onclose = () => {};
         dataChannel.onmessage = handleDataChannelMessage;
     }
 
     function handleDataChannelMessage(event) {
         const msg = JSON.parse(event.data);
-        uiLog('[DC <-]', msg.type);
 
         switch (msg.type) {
             case 'control_change':
@@ -296,7 +278,6 @@
                 }
                 break;
             case 'field_updated':
-                uiLog(`Field ${msg.payload.fieldId} updated by customer.`);
                 fieldValues[msg.payload.fieldId] = msg.payload.value;
                 renderPage(currentPageNum); // Re-render current page to show updated field
                 break;
@@ -374,45 +355,42 @@
     }
 
     async function startPdfSharing(filename) {
-        uiLog(`Starting PDF sharing for: ${filename}`);
         isController = true; // Agent is controller by default
         $("btnControl").disabled = false;
         $("btnRequestSignature").disabled = true; // Old button disabled
-        
-        // Fetch field definitions
-        const jsonFilename = filename.replace('.pdf', '.json');
+
         try {
-            const response = await fetch(`${getApiBase()}/documents/${jsonFilename}`);
-            if (response.ok) {
-                pdfFields = await response.json();
-                uiLog(`Loaded ${pdfFields.length} fields for ${filename}`, pdfFields);
-            } else {
-                pdfFields = []; // No fields JSON found
-                uiLog(`No field definitions found for ${filename}`);
+            const response = await fetch(`${getApiBase()}/api/documents/${filename}`);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch document details: ${response.status}`);
             }
+            const docData = await response.json();
+
+            pdfFields = docData.fields || [];
+            fieldValues = {};
+
+            // Send the full data to the customer
+            dcSend('load_pdf', docData);
+            
+            // Load the PDF locally
+            loadPdf(docData.pdfUrl);
+
         } catch (error) {
-            uiLog(`Error fetching field definitions: ${error}`);
-            pdfFields = [];
+            console.error("Error starting PDF sharing:", error);
+            alert("PDF 공유를 시작하는 데 실패했습니다.");
         }
-
-        // Reset field values for new PDF
-        fieldValues = {};
-
-        dcSend('load_pdf', { filename });
-        loadPdf(filename);
     }
 
-    async function loadPdf(filename) {
-        const url = `${getApiBase()}/documents/${filename}`;
+    async function loadPdf(url) {
         show('co-browsing-container');
         
         try {
             pdfDoc = await pdfjsLib.getDocument(url).promise;
-            uiLog(`PDF loaded with ${pdfDoc.numPages} pages.`);
             currentPageNum = 1;
             renderPage(currentPageNum);
         } catch (error) {
-            uiLog('Error loading PDF:', error);
+            console.error("Error loading PDF on agent side:", error);
+            alert("PDF를 로드하는 데 실패했습니다.");
         }
     }
 
@@ -436,7 +414,6 @@
         container.appendChild(canvas);
         
         await page.render({ canvasContext: context, viewport: viewport }).promise;
-        uiLog(`Page ${num} rendered`);
         
         // Draw field overlays and values
         drawFieldOverlays(num, context, viewport);
@@ -474,7 +451,6 @@
         ws = new WebSocket(getWsUrl());
 
         ws.onopen = async () => {
-            setText("wsStatus", "WS: connected");
             wsRegister();
             try {
                 const response = await fetch(`${getApiBase()}/api/agents/${agentId}/available`, { method: "POST" });
@@ -494,17 +470,14 @@
         };
 
         ws.onclose = () => {
-             setText("wsStatus", "WS: closed");
              if (queueStatusPoller) clearInterval(queueStatusPoller);
         };
-        ws.onerror = () => { setText("wsStatus", "WS: error"); };
+        ws.onerror = () => { };
         
         ws.onmessage = async (evt) => {
             let msg;
             try { msg = JSON.parse(evt.data); } 
             catch (e) { console.error("JSON parse failed", e, evt.data); return; }
-
-            uiLog("[WS <-", msg.type);
 
             if (msg.type === "session-matched" && msg.agentId === agentId) {
                 roomId = msg.sessionId;
@@ -577,7 +550,6 @@
 
             show('pdf-modal', 'flex');
         } catch (error) {
-            uiLog('Error getting PDF list:', error);
             alert('PDF 목록을 가져오는 데 실패했습니다.');
         }
     };
@@ -634,7 +606,6 @@
 
             if (clickX >= scaledX && clickX <= scaledX + scaledWidth &&
                 clickY >= scaledY && clickY <= scaledY + scaledHeight) {
-                uiLog(`Field clicked: ${field.fieldId} (Type: ${field.type})`);
                 dcSend('field_activation', { fieldId: field.fieldId });
                 // Optional: Add visual feedback for clicked field on agent side
                 break;
