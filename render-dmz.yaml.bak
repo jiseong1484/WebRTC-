@@ -1,4 +1,4 @@
-#DMZ 서버를 열 때에 사용하는 render.yaml파일. 현재는 render-free 사용
+#DMZ 서버를 열 때에 사용하는 render.yaml파일. 현재는 render-free(render.yaml) 사용
 services:
   - type: pserv # Private Service: The Spring Boot backend. Not accessible from the public internet.
     name: fermi-app
