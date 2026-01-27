@@ -15,6 +15,8 @@ public class Feedback {
 
     private String sessionId;
 
+    private String agentId;
+
     private int rating;
 
     private String comment;
@@ -23,8 +25,9 @@ public class Feedback {
 
     protected Feedback() {}
 
-    public Feedback(String sessionId, int rating, String comment) {
+    public Feedback(String sessionId, String agentId, int rating, String comment) {
         this.sessionId = sessionId;
+        this.agentId = agentId;
         this.rating = rating;
         this.comment = comment;
         this.createdAt = LocalDateTime.now();
@@ -33,6 +36,7 @@ public class Feedback {
     // Getters
     public Long getId() { return id; }
     public String getSessionId() { return sessionId; }
+    public String getAgentId() { return agentId; }
     public int getRating() { return rating; }
     public String getComment() { return comment; }
     public LocalDateTime getCreatedAt() { return createdAt; }
