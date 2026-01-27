@@ -1,11 +1,14 @@
 package com.fermi.signaling.domain.session;
 
+import com.fermi.signaling.domain.document.CompletedDocument;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "sessions")
@@ -36,6 +39,9 @@ public class Session {
 
     @Column(nullable = false)
     private String customerId;
+
+    @OneToMany(mappedBy = "session", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<CompletedDocument> completedDocuments = new ArrayList<>();
 
     public Session(String sessionId, String agentId, String customerId, Instant createdAt, Instant expiresAt) {
         this.sessionId = sessionId;
