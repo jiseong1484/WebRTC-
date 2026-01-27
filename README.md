@@ -72,8 +72,8 @@
 
 ### 2. 레포지토리 클론
 ```bash
-git clone https://github.com/jiseong1484/fermi_videoCallAndCobrowsing.git
-cd fermi_videoCallAndCobrowsing/fermi/demo
+git clone https://github.com/jiseong1484/fermi.git
+cd fermi/fermi/demo
 ```
 
 ### 3. 데이터베이스 설정
