@@ -8,4 +8,5 @@ import java.util.Optional;
 @Repository
 public interface AgentRepository extends JpaRepository<Agent, String> {
     Optional<Agent> findFirstByStatus(AgentStatus status);
+    Optional<Agent> findByUsername(String username);
 }

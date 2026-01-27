@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -85,7 +85,8 @@
                 <div class="row align-items-end g-2">
                     <div class="col-auto">
                         <label for="agentId" class="form-label">Agent ID</label>
-                        <input id="agentId" class="form-control" value="agent-1" />
+                        <input id="agentIdDisplay" class="form-control" type="text" th:value="${agentId}" readonly />
+                        <input type="hidden" id="agentIdHidden" th:value="${agentId}" />
                     </div>
                     <div class="col-auto">
                         <button id="btnGoOnline" class="btn btn-primary w-100">온라인</button>
@@ -192,7 +193,7 @@
 <script>
     const $ = (id) => document.getElementById(id);
 
-    let agentId = "";
+    let agentId = $("agentIdHidden").value;
     let roomId = "";
     let ws = null;
     let pc = null;
@@ -495,8 +496,7 @@
         pdfModal = new bootstrap.Modal($('pdf-modal'));
 
         $("btnGoOnline").onclick = async () => {
-            agentId = $("agentId").value.trim();
-            if (!agentId) { alert("상담사 ID를 입력하세요."); return; }
+            if (!agentId) { alert("상담사 ID가 설정되지 않았습니다. 페이지를 새로고침해주세요."); return; }
             $("btnGoOnline").disabled = true;
             setText("status", "카메라/마이크 권한을 허용해주세요...");
             try {
@@ -515,7 +515,7 @@
                     await fetch(`${getApiBase()}/api/agents/${agentId}/available`, { method: "POST" });
                     setText("status", "온라인. '다음 통화' 버튼을 눌러주세요.");
                     $("btnNextCall").disabled = false;
-                    $("agentId").disabled = true;
+
                     if (queueStatusPoller) clearInterval(queueStatusPoller);
                     queueStatusPoller = setInterval(updateQueueSize, 5000);
                     updateQueueSize();

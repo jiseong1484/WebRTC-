@@ -37,8 +37,8 @@ public class SessionController {
         Session s = sessionService.createSession(req.agentId(), req.customerId());
 
         String base = sessionService.getFrontendBaseUrl();
-        String agentUrl = base + "/agent.html?sessionId=" + s.getSessionId();
-        String customerUrl = base + "/join.html?sessionId=" + s.getSessionId();
+        String agentUrl = base + "/agent?sessionId=" + s.getSessionId();
+        String customerUrl = base + "/join?sessionId=" + s.getSessionId();
 
         return new CreateSessionResponse(
                 s.getSessionId(),

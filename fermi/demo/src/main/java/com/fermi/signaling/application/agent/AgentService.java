@@ -12,26 +12,18 @@ public class AgentService {
         this.agentRepository = agentRepository;
     }
 
-    public void registerIfAbsent(String agentId) {
-        agentRepository.findById(agentId).orElseGet(() -> {
-            Agent a = new Agent(agentId, AgentStatus.OFFLINE);
-            agentRepository.save(a);
-            return a;
-        });
-    }
-
     public void setAvailable(String agentId) {
-        registerIfAbsent(agentId);
-        Agent a = agentRepository.findById(agentId).orElseThrow();
-        a.setStatus(AgentStatus.AVAILABLE);
-        agentRepository.save(a);
+        Agent agent = agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("Agent not found with ID: " + agentId));
+        agent.setStatus(AgentStatus.AVAILABLE);
+        agentRepository.save(agent);
     }
 
     public void setBusy(String agentId) {
-        registerIfAbsent(agentId);
-        Agent a = agentRepository.findById(agentId).orElseThrow();
-        a.setStatus(AgentStatus.BUSY);
-        agentRepository.save(a);
+        Agent agent = agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("Agent not found with ID: " + agentId));
+        agent.setStatus(AgentStatus.BUSY);
+        agentRepository.save(agent);
     }
 
     public Optional<Agent> findById(String agentId) {

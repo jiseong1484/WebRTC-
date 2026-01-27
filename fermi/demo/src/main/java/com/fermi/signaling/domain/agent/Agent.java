@@ -17,6 +17,12 @@ public class Agent {
     @Id
     private String agentId;
 
+    @Column(unique = true, nullable = false)
+    private String username;
+
+    @Column(nullable = false)
+    private String password;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private AgentStatus status;
@@ -24,8 +30,10 @@ public class Agent {
     @Column(nullable = false)
     private Instant updatedAt;
 
-    public Agent(String agentId, AgentStatus status){
+    public Agent(String agentId, String username, String password, AgentStatus status){
         this.agentId = agentId;
+        this.username = username;
+        this.password = password;
         this.status = status;
         this.updatedAt = Instant.now();
     }

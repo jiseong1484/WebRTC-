@@ -80,8 +80,29 @@
 </head>
 <body class="bg-light">
 
+<!-- Customer Info Form -->
+<div id="customer-form" class="d-flex justify-content-center align-items-center h-100">
+    <div class="card text-center shadow-sm" style="width: 400px;">
+        <div class="card-body p-5">
+            <h1 class="card-title">상담 신청</h1>
+            <form id="join-form">
+                <div class="mb-3">
+                    <input type="text" class="form-control" id="name" placeholder="이름" required>
+                </div>
+                <div class="mb-3">
+                    <input type="tel" class="form-control" id="phone" placeholder="전화번호" required>
+                </div>
+                <div class="mb-3">
+                    <input type="text" class="form-control" id="ssn" placeholder="주민번호" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">상담사 연결</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 <!-- Waiting UI (Centered) -->
-<div id="waiting-ui" class="d-flex justify-content-center align-items-center h-100">
+<div id="waiting-ui" class="d-flex justify-content-center align-items-center h-100 d-none">
     <div class="card text-center shadow-sm">
         <div class="card-body p-5">
             <h1 class="card-title">상담 대기</h1>
@@ -255,11 +276,8 @@
         if (localStream) localStream.getTracks().forEach(t => t.stop());
         if (ws && ws.readyState === 1) ws.close();
         
-        hide("call-ui");
-        $('waiting-ui').classList.remove('d-none');
-        setText("status", "상담이 종료되었습니다. 5초 후 페이지가 새로고침됩니다.");
-
-        setTimeout(() => location.reload(), 5000);
+        // Redirect to the end page, optionally passing the session ID
+        window.location.href = `/end?sessionId=${roomId}`;
     }
 
     function clearActiveFields() {
@@ -401,6 +419,36 @@
     
     // ===== Boot =====
     document.addEventListener("DOMContentLoaded", () => {
+        const joinForm = $('join-form');
+        joinForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const name = $('name').value;
+            const phone = $('phone').value;
+            const ssn = $('ssn').value;
+
+            try {
+                const response = await fetch(`${getApiBase()}/api/v1/customers`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, phone, ssn })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create customer');
+                }
+
+                $('customer-form').classList.add('d-none');
+                $('waiting-ui').classList.remove('d-none');
+                initializeWebSocket();
+
+            } catch (error) {
+                console.error('Error:', error);
+                alert('상담 신청에 실패했습니다.');
+            }
+        });
+    });
+
+    function initializeWebSocket() {
         setText("status", "서버에 연결 중...");
         ws = new WebSocket(getWsUrl());
         ws.onopen = () => { 
@@ -494,7 +542,7 @@
                 }
             }
         });
-    });
+    }
 </script>
 </body>
 </html>

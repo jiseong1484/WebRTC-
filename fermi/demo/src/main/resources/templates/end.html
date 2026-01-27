@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>상담 종료</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.2/dist/flatly/bootstrap.min.css">
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f8f9fa;
+        }
+        .feedback-container {
+            max-width: 500px;
+            width: 100%;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            background-color: #ffffff;
+            text-align: center;
+            transition: opacity 0.5s ease-in-out;
+        }
+    </style>
+</head>
+<body>
+    <div class="feedback-container">
+        <h1 class="mb-3">상담이 종료되었습니다.</h1>
+        <p class="lead text-muted mb-4">소중한 시간을 내어주셔서 감사합니다. 상담 경험에 대한 의견을 남겨주시면 서비스 개선에 큰 도움이 됩니다.</p>
+        <form id="feedback-form">
+            <div class="mb-3">
+                <label for="rating" class="form-label">만족도 평가</label>
+                <div id="rating" class="d-flex justify-content-center fs-2" style="cursor: pointer;">
+                    <span>&#9734;</span><span>&#9734;</span><span>&#9734;</span><span>&#9734;</span><span>&#9734;</span>
+                </div>
+                <input type="hidden" id="rating-value" name="rating" value="0">
+            </div>
+            <div class="mb-3">
+                <label for="feedback-text" class="form-label">의견 남기기</label>
+                <textarea class="form-control" id="feedback-text" rows="4" placeholder="상담사에 대한 칭찬이나 개선점을 자유롭게 적어주세요."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">의견 제출</button>
+        </form>
+    </div>
+    <script>
+        const stars = document.querySelectorAll('#rating span');
+        const ratingValue = document.getElementById('rating-value');
+
+        stars.forEach((star, index) => {
+            star.addEventListener('click', () => {
+                const rating = index + 1;
+                ratingValue.value = rating;
+                stars.forEach((s, i) => {
+                    s.innerHTML = i < rating ? '&#9733;' : '&#9734;';
+                    s.style.color = i < rating ? 'gold' : 'black';
+                });
+            });
+        });
+
+        const feedbackForm = document.getElementById('feedback-form');
+        const feedbackContainer = document.querySelector('.feedback-container');
+
+        feedbackForm.addEventListener('submit', (event) => {
+            event.preventDefault();
+            
+            // Here you could send the data to your server, e.g., using fetch()
+            // const rating = ratingValue.value;
+            // const feedbackText = document.getElementById('feedback-text').value;
+            // fetch('/api/feedback', { method: 'POST', body: JSON.stringify({ rating, feedbackText }) });
+            
+            feedbackContainer.style.opacity = 0;
+            setTimeout(() => {
+                feedbackContainer.innerHTML = `
+                    <h1 class="mb-3">소중한 의견 감사합니다.</h1>
+                    <p class="lead text-muted">더 나은 서비스로 보답하겠습니다.</p>
+                `;
+                feedbackContainer.style.opacity = 1;
+            }, 500); // Match timeout with CSS transition duration
+        });
+    </script>
+</body>
+</html>

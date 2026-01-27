@@ -13,7 +13,7 @@ public class CorsConfig {
         return new WebMvcConfigurer() {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/api/**")
+                registry.addMapping("/**")
                         // 개발용: localhost 및 같은 와이파이의 사설 IP(주로 10/8, 172.16/12, 192.168/16)에서 열린 프론트(8000) 허용
                         .allowedOriginPatterns(
                                 "http://localhost:8000",
